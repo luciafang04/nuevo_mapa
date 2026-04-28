@@ -69,6 +69,17 @@ function RecenterMap({
   return null;
 }
 
+function WeatherPane() {
+  const map = useMap();
+
+  if (!map.getPane("weather-overlay")) {
+    const pane = map.createPane("weather-overlay");
+    pane.style.zIndex = "450";
+  }
+
+  return null;
+}
+
 export default function SpainMap() {
   const [query, setQuery] = useState("");
   const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
@@ -77,6 +88,10 @@ export default function SpainMap() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedName, setSelectedName] = useState("");
+  const [showTemperature, setShowTemperature] = useState(false);
+  const [showPrecipitation, setShowPrecipitation] = useState(false);
+
+  const weatherApiKey = process.env.NEXT_PUBLIC_WEATHER_API_KEY ?? "";
 
   const markerPosition = useMemo<[number, number] | null>(() => {
     if (!coordinates) {
@@ -172,6 +187,39 @@ export default function SpainMap() {
         </button>
       </div>
 
+      <div className="rounded-3xl border border-emerald-200 bg-emerald-50/80 p-4 shadow-sm shadow-emerald-100">
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <span className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-800">
+              Capas de clima
+            </span>
+            <p className="text-sm text-emerald-900/80">
+              Activa las capas encima del mapa base de OpenStreetMap.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50">
+            <input
+              type="checkbox"
+              checked={showTemperature}
+              onChange={(event) => setShowTemperature(event.target.checked)}
+              className="h-5 w-5 rounded border-slate-300 text-emerald-600 accent-emerald-600 focus:ring-emerald-500"
+            />
+            Temperatura
+          </label>
+          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50">
+            <input
+              type="checkbox"
+              checked={showPrecipitation}
+              onChange={(event) => setShowPrecipitation(event.target.checked)}
+              className="h-5 w-5 rounded border-slate-300 text-emerald-600 accent-emerald-600 focus:ring-emerald-500"
+            />
+            Precipitaciones
+          </label>
+        </div>
+      </div>
+
       {error ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -185,10 +233,29 @@ export default function SpainMap() {
           scrollWheelZoom
           className="h-[420px] w-full sm:h-[520px]"
         >
+          <WeatherPane />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
+          {weatherApiKey && showTemperature ? (
+            <TileLayer
+              attribution='&copy; <a href="https://openweathermap.org/">OpenWeatherMap</a>'
+              url={`https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=${weatherApiKey}`}
+              opacity={0.85}
+              pane="weather-overlay"
+              zIndex={460}
+            />
+          ) : null}
+          {weatherApiKey && showPrecipitation ? (
+            <TileLayer
+              attribution='&copy; <a href="https://openweathermap.org/">OpenWeatherMap</a>'
+              url={`https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=${weatherApiKey}`}
+              opacity={0.85}
+              pane="weather-overlay"
+              zIndex={470}
+            />
+          ) : null}
           <RecenterMap center={mapCenter} zoom={mapZoom} />
           <ClickHandler onSelect={handleMapSelection} />
           {markerPosition ? (
@@ -196,6 +263,13 @@ export default function SpainMap() {
           ) : null}
         </MapContainer>
       </div>
+
+      {!weatherApiKey ? (
+        <p className="text-sm text-amber-700">
+          Falta configurar <code>NEXT_PUBLIC_WEATHER_API_KEY</code> para ver
+          las capas de OpenWeatherMap.
+        </p>
+      ) : null}
 
       <div className="rounded-2xl bg-slate-900 px-5 py-4 text-slate-50">
         {coordinates ? (
