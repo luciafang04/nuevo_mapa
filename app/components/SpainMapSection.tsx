@@ -5,8 +5,11 @@ import dynamic from "next/dynamic";
 const SpainMap = dynamic(() => import("./SpainMap"), {
   ssr: false,
   loading: () => (
-    <section className="mx-auto w-full max-w-6xl rounded-[28px] border border-black/10 bg-white/90 p-8 shadow-lg shadow-black/5">
-      <p className="text-sm text-slate-600">Cargando mapa...</p>
+    <section className="mx-auto w-full max-w-6xl overflow-hidden rounded-[32px] border border-white/70 bg-white/85 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8">
+      <div className="h-1.5 w-24 rounded-full bg-gradient-to-r from-emerald-500 via-cyan-500 to-sky-500" />
+      <p className="mt-5 text-sm font-medium text-slate-600">
+        Cargando el mapa y las capas de clima...
+      </p>
     </section>
   ),
 });
