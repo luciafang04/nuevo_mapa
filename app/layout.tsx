@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Manrope, Space_Mono } from "next/font/google";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -33,7 +34,10 @@ export default function RootLayout({
       lang="es"
       className={`${manrope.variable} ${fraunces.variable} ${spaceMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <Toaster />
+      </body>
     </html>
   );
 }
