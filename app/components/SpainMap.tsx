@@ -453,7 +453,7 @@ export default function SpainMap() {
                         type="text"
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
-                        placeholder="Ejemplo: Barcelona, Espana"
+                        placeholder="Ejemplo: Barcelona"
                         className="h-10 flex-1 rounded-none border-0 border-b border-slate-300 bg-white px-0 text-base text-black shadow-none ring-0 placeholder:text-black/40 focus-visible:border-orange-500 focus-visible:ring-0"
                       />
                       <Button
