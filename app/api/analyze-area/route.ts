@@ -27,7 +27,8 @@ type UrbanToolResult = {
 
 type FloodRiskToolResult = {
   risk: "bajo" | "medio" | "alto" | "desconocido";
-  nearbyWater: string[];
+  source: string;
+  matchedZones: string[];
   warning?: string;
 };
 
@@ -124,14 +125,6 @@ const urbanAmenityLabels: Record<string, string> = {
 
 const landuseLabels: Record<string, string> = {
   residential: "uso residencial",
-};
-
-const waterLabels: Record<string, string> = {
-  canal: "canales",
-  lake: "lagos",
-  river: "ríos",
-  stream: "arroyos",
-  water: "masas de agua",
 };
 
 const hilucsLandUseLabels: Record<string, string> = {
@@ -419,16 +412,26 @@ async function riesgoInundacion(lat: number, lon: number, request: Request) {
 
     return {
       risk,
-      nearbyWater: normalizeLabels(data.nearbyWater, waterLabels),
+      source:
+        typeof data.source === "string" && data.source.trim()
+          ? data.source.trim()
+          : "Fuente oficial no especificada",
+      matchedZones: Array.isArray(data.matchedZones)
+        ? data.matchedZones.filter(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0,
+          )
+        : [],
     } satisfies FloodRiskToolResult;
   } catch (error) {
     return {
       risk: "desconocido",
-      nearbyWater: [],
+      source: "Sistema Nacional de Cartografía de Zonas Inundables (MITECO/SNCZI)",
+      matchedZones: [],
       warning:
         error instanceof Error
           ? error.message
-          : "No se pudieron obtener datos de riesgo de inundacion.",
+          : "No se pudieron obtener datos oficiales de riesgo de inundación.",
     } satisfies FloodRiskToolResult;
   }
 }
@@ -662,7 +665,7 @@ function buildLimitations(context: ToolContext) {
       ? "No se han encontrado equipamientos o usos del suelo en el radio consultado, o la fuente no devolvio elementos."
       : null,
     context.floodRisk.risk === "desconocido"
-      ? "No hay suficiente informacion para clasificar el riesgo de inundacion con fiabilidad."
+      ? "No hay suficiente información para clasificar el riesgo de inundación con fiabilidad a partir de la cartografía oficial consultada."
       : null,
   ].filter((value): value is string => Boolean(value));
 }
@@ -686,7 +689,8 @@ function buildCompactContext(context: ToolContext, limitations: string[]) {
     },
     floodRisk: {
       risk: context.floodRisk.risk,
-      nearbyWater: takeTop(context.floodRisk.nearbyWater, 5),
+      source: context.floodRisk.source,
+      matchedZones: takeTop(context.floodRisk.matchedZones, 5),
     },
     copernicus: {
       summary: context.copernicus.summary,

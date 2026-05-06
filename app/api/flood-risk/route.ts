@@ -1,25 +1,38 @@
 import { NextResponse } from "next/server";
 
-type OverpassElement = {
-  lat?: number;
-  lon?: number;
-  center?: {
-    lat: number;
-    lon: number;
-  };
-  tags?: {
-    waterway?: string;
-    natural?: string;
-    water?: string;
-    landuse?: string;
-  };
+type FloodRiskLevel = "bajo" | "medio" | "alto" | "desconocido";
+
+type FloodLayerConfig = {
+  key: "T10" | "T50" | "T100" | "T500";
+  label: string;
+  serviceUrl: string;
 };
 
-type OverpassResponse = {
-  elements?: OverpassElement[];
-};
+const FLOOD_LAYERS: FloodLayerConfig[] = [
+  {
+    key: "T10",
+    label: "Zona inundable oficial T10 (alta probabilidad)",
+    serviceUrl: "https://wms.mapama.gob.es/sig/Agua/ZI_LaminasQ10/wms.aspx",
+  },
+  {
+    key: "T50",
+    label: "Zona inundable oficial T50 (probabilidad frecuente)",
+    serviceUrl: "https://wms.mapama.gob.es/sig/Agua/ZI_LaminasQ50/wms.aspx",
+  },
+  {
+    key: "T100",
+    label: "Zona inundable oficial T100 (probabilidad media)",
+    serviceUrl: "https://wms.mapama.gob.es/sig/Agua/ZI_LaminasQ100/wms.aspx",
+  },
+  {
+    key: "T500",
+    label: "Zona inundable oficial T500 (probabilidad baja o excepcional)",
+    serviceUrl: "https://wms.mapama.gob.es/sig/Agua/ZI_LaminasQ500/wms.aspx",
+  },
+];
 
-const SEARCH_RADIUS_METERS = 1000;
+const SNCZI_SOURCE =
+  "Sistema Nacional de Cartografía de Zonas Inundables (MITECO/SNCZI)";
 
 function isValidLatitude(value: number) {
   return Number.isFinite(value) && value >= -90 && value <= 90;
@@ -29,97 +42,82 @@ function isValidLongitude(value: number) {
   return Number.isFinite(value) && value >= -180 && value <= 180;
 }
 
-function buildOverpassQuery(lat: number, lon: number) {
-  return `
-    [out:json][timeout:25];
-    (
-      nwr(around:${SEARCH_RADIUS_METERS},${lat},${lon})["waterway"~"^(river|stream|canal)$"];
-      nwr(around:${SEARCH_RADIUS_METERS},${lat},${lon})["natural"="water"];
-      nwr(around:${SEARCH_RADIUS_METERS},${lat},${lon})["water"~"^(lake|reservoir|pond|basin|lagoon)$"];
-      nwr(around:${SEARCH_RADIUS_METERS},${lat},${lon})["landuse"~"^(reservoir|basin)$"];
-    );
-    out center tags;
-  `;
+function buildBbox(lat: number, lon: number) {
+  const delta = 0.0005;
+
+  return [
+    (lon - delta).toFixed(6),
+    (lat - delta).toFixed(6),
+    (lon + delta).toFixed(6),
+    (lat + delta).toFixed(6),
+  ].join(",");
 }
 
-function toRadians(value: number) {
-  return (value * Math.PI) / 180;
+function buildFeatureInfoUrl(layer: FloodLayerConfig, lat: number, lon: number) {
+  const url = new URL(layer.serviceUrl);
+
+  url.searchParams.set("SERVICE", "WMS");
+  url.searchParams.set("VERSION", "1.3.0");
+  url.searchParams.set("REQUEST", "GetFeatureInfo");
+  url.searchParams.set("LAYERS", "NZ.RiskZone");
+  url.searchParams.set("QUERY_LAYERS", "NZ.RiskZone");
+  url.searchParams.set("INFO_FORMAT", "text/html");
+  url.searchParams.set("CRS", "CRS:84");
+  url.searchParams.set("BBOX", buildBbox(lat, lon));
+  url.searchParams.set("WIDTH", "3");
+  url.searchParams.set("HEIGHT", "3");
+  url.searchParams.set("I", "1");
+  url.searchParams.set("J", "1");
+
+  return url;
 }
 
-function getDistanceMeters(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-) {
-  const earthRadius = 6371000;
-  const deltaLat = toRadians(lat2 - lat1);
-  const deltaLon = toRadians(lon2 - lon1);
-  const a =
-    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-    Math.cos(toRadians(lat1)) *
-      Math.cos(toRadians(lat2)) *
-      Math.sin(deltaLon / 2) *
-      Math.sin(deltaLon / 2);
+function responseMeansNoData(text: string) {
+  const normalized = text.toLowerCase();
 
-  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return (
+    normalized.includes("información no encontrada") ||
+    normalized.includes("no se han encontrado datos en la ubicación seleccionada")
+  );
 }
 
-function getElementCoordinates(element: OverpassElement) {
-  if (typeof element.lat === "number" && typeof element.lon === "number") {
-    return { lat: element.lat, lon: element.lon };
-  }
-
-  if (element.center) {
-    return element.center;
-  }
-
-  return null;
+function responseMeansServiceError(text: string) {
+  return text.toLowerCase().includes("serviceexception");
 }
 
-function getWaterType(element: OverpassElement) {
-  const tags = element.tags;
+async function queryFloodLayer(layer: FloodLayerConfig, lat: number, lon: number) {
+  const response = await fetch(buildFeatureInfoUrl(layer, lat, lon), {
+    headers: {
+      Accept: "text/html",
+      "User-Agent": "mapas-next-app/0.1.0",
+    },
+    cache: "no-store",
+  });
 
-  if (!tags) {
-    return null;
+  if (!response.ok) {
+    throw new Error(`SNCZI request failed for ${layer.key}.`);
   }
 
-  if (tags.waterway === "river") {
-    return "river";
+  const body = await response.text();
+
+  if (responseMeansServiceError(body)) {
+    throw new Error(`SNCZI returned an invalid response for ${layer.key}.`);
   }
 
-  if (tags.water === "lake") {
-    return "lake";
-  }
-
-  if (
-    tags.natural === "water" ||
-    tags.water === "reservoir" ||
-    tags.water === "pond" ||
-    tags.water === "basin" ||
-    tags.water === "lagoon" ||
-    tags.landuse === "reservoir" ||
-    tags.landuse === "basin" ||
-    tags.waterway === "stream" ||
-    tags.waterway === "canal"
-  ) {
-    return "water";
-  }
-
-  return null;
+  return !responseMeansNoData(body);
 }
 
-function getRiskLevel(minDistance: number | null) {
-  if (minDistance === null) {
-    return "bajo";
-  }
-
-  if (minDistance <= 200) {
+function getRiskLevel(matchedLayers: FloodLayerConfig[]): FloodRiskLevel {
+  if (matchedLayers.some((layer) => layer.key === "T10" || layer.key === "T50")) {
     return "alto";
   }
 
-  if (minDistance <= 500) {
+  if (matchedLayers.some((layer) => layer.key === "T100")) {
     return "medio";
+  }
+
+  if (matchedLayers.some((layer) => layer.key === "T500")) {
+    return "bajo";
   }
 
   return "bajo";
@@ -138,53 +136,21 @@ export async function GET(request: Request) {
   }
 
   try {
-    const response = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "text/plain;charset=UTF-8",
-        "User-Agent": "mapas-next-app/0.1.0",
-      },
-      body: buildOverpassQuery(lat, lon),
-      cache: "no-store",
-    });
+    const queryResults = await Promise.all(
+      FLOOD_LAYERS.map(async (layer) => ({
+        layer,
+        matched: await queryFloodLayer(layer, lat, lon),
+      })),
+    );
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: "Flood risk request failed." },
-        { status: 502 },
-      );
-    }
-
-    const data = (await response.json()) as OverpassResponse;
-    const nearbyWater = new Set<string>();
-    let minDistance: number | null = null;
-
-    for (const element of data.elements ?? []) {
-      const waterType = getWaterType(element);
-      const coordinates = getElementCoordinates(element);
-
-      if (!waterType || !coordinates) {
-        continue;
-      }
-
-      nearbyWater.add(waterType);
-
-      const distance = getDistanceMeters(
-        lat,
-        lon,
-        coordinates.lat,
-        coordinates.lon,
-      );
-
-      if (minDistance === null || distance < minDistance) {
-        minDistance = distance;
-      }
-    }
+    const matchedLayers = queryResults
+      .filter((result) => result.matched)
+      .map((result) => result.layer);
 
     return NextResponse.json({
-      risk: getRiskLevel(minDistance),
-      nearbyWater: Array.from(nearbyWater).sort(),
+      risk: getRiskLevel(matchedLayers),
+      source: SNCZI_SOURCE,
+      matchedZones: matchedLayers.map((layer) => layer.label),
     });
   } catch {
     return NextResponse.json(
