@@ -8,9 +8,9 @@ const alertVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-card text-card-foreground",
+        default: "bg-card text-black",
         destructive:
-          "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
+          "border-destructive/50 text-black dark:border-destructive [&>svg]:text-black",
       },
     },
     defaultVariants: {
@@ -41,7 +41,7 @@ function AlertDescription({
   return (
     <div
       data-slot="alert-description"
-      className={cn("text-sm [&_p]:leading-relaxed", className)}
+      className={cn("text-sm text-black [&_p]:leading-relaxed", className)}
       {...props}
     />
   );

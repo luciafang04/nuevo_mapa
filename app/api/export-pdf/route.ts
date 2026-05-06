@@ -163,21 +163,21 @@ function buildReportHtml(report: GeospatialReport) {
       <h1>${escapeHtml(report.locationLabel)}</h1>
       <div class="meta">
         <span><strong>Generado:</strong> ${escapeHtml(generatedAt)}</span>
-        <span><strong>Formato:</strong> Reporte tecnico</span>
+        <span><strong>Formato:</strong> Reporte técnico</span>
       </div>
     </header>
 
     <main>
-      ${renderSection("Descripcion del area", report.description)}
+      ${renderSection("Descripción del área", report.description)}
       ${renderSection("Infraestructura", report.infrastructure)}
       ${renderSection("Riesgos", report.risks)}
       ${renderSection("Usos urbanos", report.urbanUses)}
-      ${renderSection("Recomendacion", report.recommendation)}
+      ${renderSection("Recomendación", report.recommendation)}
       ${renderSection("Limitaciones", report.limitations)}
     </main>
 
     <footer class="footer">
-      Este documento se ha generado automaticamente a partir del informe geoespacial recibido por la API.
+      Este documento se ha generado automáticamente a partir del informe geoespacial recibido por la API.
     </footer>
   </body>
 </html>`;

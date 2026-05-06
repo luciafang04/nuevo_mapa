@@ -2,22 +2,22 @@
 @import "leaflet/dist/leaflet.css";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fff1f7;
+  --foreground: #000000;
   --card: #ffffff;
-  --card-foreground: #171717;
+  --card-foreground: #000000;
   --primary: #0f172a;
   --primary-foreground: #ffffff;
   --secondary: #f1f5f9;
   --secondary-foreground: #0f172a;
   --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #ecfdf5;
-  --accent-foreground: #064e3b;
+  --muted-foreground: #4b5563;
+  --accent: #fff7ed;
+  --accent-foreground: #9a3412;
   --destructive: #dc2626;
-  --border: #cbd5e1;
-  --input: #cbd5e1;
-  --ring: #10b981;
+  --border: #f0c5d6;
+  --input: #f0c5d6;
+  --ring: #f97316;
 }
 
 @theme inline {
@@ -41,10 +41,22 @@
   --font-mono: var(--font-space-mono);
 }
 
+.font-title {
+  font-family: "Playfair Display", serif !important;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+[data-slot="card-title"] {
+  font-family: "Playfair Display", serif;
+}
+
 body {
-  background:
-    radial-gradient(circle at top, rgba(255, 255, 255, 0.92), transparent 34%),
-    linear-gradient(180deg, #f4fbf7 0%, #eef7f8 42%, #edf1fb 100%);
+  background: #fff1f7;
   color: var(--foreground);
   font-family: var(--font-manrope), sans-serif;
   min-height: 100vh;
@@ -55,6 +67,6 @@ body {
 }
 
 ::selection {
-  background: rgba(22, 163, 74, 0.18);
+  background: #fb923c;
   color: inherit;
 }

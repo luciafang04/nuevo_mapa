@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+
 type AnalyzeAreaRequest = {
   lat?: number;
   lon?: number;
@@ -82,7 +84,8 @@ type ToolContext = {
   ign: IgnToolResult;
 };
 
-const ANALYSIS_MODEL = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
+const MODEL = "gpt-4.1-mini";
+const EXTERNAL_FETCH_TIMEOUT_MS = 12_000;
 
 const reportSchema = {
   type: "object",
@@ -170,6 +173,30 @@ type IgnFeature = {
 type IgnFeatureCollection = {
   features?: IgnFeature[];
 };
+
+function maskApiKey(apiKey: string) {
+  if (apiKey.length <= 8) {
+    return "***";
+  }
+
+  return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+}
 
 function isValidLatitude(value: number) {
   return Number.isFinite(value) && value >= -90 && value <= 90;
@@ -268,23 +295,40 @@ function getHilucsLandUseLabel(value: string | null) {
 function buildSmallBbox(lat: number, lon: number) {
   const delta = 0.001;
 
-  return [
-    lon - delta,
-    lat - delta,
-    lon + delta,
-    lat + delta,
-  ].join(",");
+  return [lon - delta, lat - delta, lon + delta, lat + delta].join(",");
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function fetchLocalJson(path: string, request: Request) {
   const url = new URL(path, request.url);
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
     },
-    cache: "no-store",
-  });
+    EXTERNAL_FETCH_TIMEOUT_MS,
+  );
 
   const data = (await response.json()) as Record<string, unknown>;
 
@@ -304,13 +348,17 @@ async function buscarCoordenadas(lat: number, lon: number) {
   nominatimUrl.searchParams.set("lon", String(lon));
 
   try {
-    const response = await fetch(nominatimUrl, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "mapas-next-app/0.1.0 contacto-local",
+    const response = await fetchWithTimeout(
+      nominatimUrl,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "mapas-next-app/0.1.0 contacto-local",
+        },
+        cache: "no-store",
       },
-      cache: "no-store",
-    });
+      EXTERNAL_FETCH_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
       throw new Error("Reverse geocoding request failed.");
@@ -324,11 +372,15 @@ async function buscarCoordenadas(lat: number, lon: number) {
       lon,
       label: label || "Ubicación desconocida",
     } satisfies CoordinatesToolResult;
-  } catch {
+  } catch (error) {
     return {
       lat,
       lon,
       label: "Ubicación desconocida",
+      warning:
+        error instanceof Error
+          ? error.message
+          : "No se pudo obtener la ubicacion por reverse geocoding.",
     } satisfies CoordinatesToolResult;
   }
 }
@@ -392,39 +444,43 @@ async function observacionCopernicus(lat: number, lon: number) {
   const oneYearAgo = getIsoDateDaysAgo(365);
 
   try {
-    const response = await fetch("https://stac.dataspace.copernicus.eu/v1/search", {
-      method: "POST",
-      headers: {
-        Accept: "application/geo+json, application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        collections: ["sentinel-2-l2a"],
-        intersects: {
-          type: "Point",
-          coordinates: [lon, lat],
+    const response = await fetchWithTimeout(
+      "https://stac.dataspace.copernicus.eu/v1/search",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/geo+json, application/json",
+          "Content-Type": "application/json",
         },
-        datetime: `${oneYearAgo}T00:00:00Z/${today}T23:59:59Z`,
-        limit: 5,
-        sortby: [
-          {
-            field: "properties.datetime",
-            direction: "desc",
+        body: JSON.stringify({
+          collections: ["sentinel-2-l2a"],
+          intersects: {
+            type: "Point",
+            coordinates: [lon, lat],
           },
-        ],
-        fields: {
-          include: [
-            "id",
-            "properties.datetime",
-            "properties.eo:cloud_cover",
-            "properties.platform",
-            "properties.s2:mgrs_tile",
+          datetime: `${oneYearAgo}T00:00:00Z/${today}T23:59:59Z`,
+          limit: 5,
+          sortby: [
+            {
+              field: "properties.datetime",
+              direction: "desc",
+            },
           ],
-          exclude: ["assets", "geometry", "links"],
-        },
-      }),
-      cache: "no-store",
-    });
+          fields: {
+            include: [
+              "id",
+              "properties.datetime",
+              "properties.eo:cloud_cover",
+              "properties.platform",
+              "properties.s2:mgrs_tile",
+            ],
+            exclude: ["assets", "geometry", "links"],
+          },
+        }),
+        cache: "no-store",
+      },
+      EXTERNAL_FETCH_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
       throw new Error("Copernicus STAC request failed.");
@@ -482,12 +538,16 @@ async function observacionCopernicus(lat: number, lon: number) {
 }
 
 async function fetchIgnFeatures(url: URL) {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/geo+json, application/json",
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: {
+        Accept: "application/geo+json, application/json",
+      },
+      cache: "no-store",
     },
-    cache: "no-store",
-  });
+    EXTERNAL_FETCH_TIMEOUT_MS,
+  );
 
   if (!response.ok) {
     throw new Error("IGN/IDEE feature request failed.");
@@ -607,13 +667,73 @@ function buildLimitations(context: ToolContext) {
   ].filter((value): value is string => Boolean(value));
 }
 
-async function generateReportWithLlm(context: ToolContext, limitations: string[]) {
+function takeTop(values: string[], limit: number) {
+  return values.slice(0, limit);
+}
+
+function buildCompactContext(context: ToolContext, limitations: string[]) {
+  return {
+    location: {
+      lat: Number(context.coordinates.lat.toFixed(6)),
+      lon: Number(context.coordinates.lon.toFixed(6)),
+      label: context.coordinates.label,
+    },
+    urban: {
+      amenitiesCount: context.urban.amenities.length,
+      landuseCount: context.urban.landuse.length,
+      amenities: takeTop(context.urban.amenities, 8),
+      landuse: takeTop(context.urban.landuse, 5),
+    },
+    floodRisk: {
+      risk: context.floodRisk.risk,
+      nearbyWater: takeTop(context.floodRisk.nearbyWater, 5),
+    },
+    copernicus: {
+      summary: context.copernicus.summary,
+      observationsCount: context.copernicus.observations.length,
+      observations: context.copernicus.observations.slice(0, 3).map((item) => ({
+        date: item.date,
+        cloudCover: item.cloudCover,
+        satellite: item.satellite,
+        tile: item.tile,
+      })),
+    },
+    ign: {
+      summary: context.ign.summary,
+      administrativeUnits: context.ign.administrativeUnits.slice(0, 5),
+      landUses: context.ign.landUses.slice(0, 5),
+    },
+    limitations,
+  };
+}
+
+async function generateReportWithLlm(
+  context: ToolContext,
+  limitations: string[],
+) {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY environment variable.");
+  }
+
+  console.log(
+    `[analyze-area] OPENAI_API_KEY exists: ${maskApiKey(apiKey)}`,
+  );
+  console.log(`[analyze-area] calling OpenAI model: ${MODEL}`);
+
   const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey,
+    timeout: 15000,
+    maxRetries: 0,
   });
 
+  const compactContext = buildCompactContext(context, limitations);
+
   const response = await openai.responses.create({
-    model: ANALYSIS_MODEL,
+    model: MODEL,
+    max_output_tokens: 500,
+    prompt_cache_key: "analyze-area-report-v1",
     input: [
       {
         role: "system",
@@ -621,7 +741,7 @@ async function generateReportWithLlm(context: ToolContext, limitations: string[]
           {
             type: "input_text",
             text:
-              "Eres un analista territorial. Debes redactar un informe solo con los datos proporcionados por las tools, incluyendo la observacion satelital de Copernicus y los datos oficiales IGN/IDEE cuando existan. No inventes nombres, distancias, infraestructuras, riesgos ni usos urbanos. No presentes Copernicus como validacion de riesgo si solo aporta metadatos de escenas Sentinel-2. Si IGN/IDEE aporta SIOSE 2017, aclara que es uso oficial del suelo de esa fuente y no una inspeccion actual en tiempo real. Escribe en lenguaje natural, claro y profesional: no copies identificadores tecnicos, claves de API, snake_case ni etiquetas internas como bus_stop, stop_area o subway_entrance. Si faltan datos, dilo con claridad en limitations y en la seccion afectada. Todos los campos deben ser strings en espanol. Devuelve solo un JSON valido ajustado al schema solicitado.",
+              "Eres un analista territorial. Escribe solo en español, con frases cortas, ortografía española correcta y sin tecnicismos innecesarios. Usa tildes, eñes y mayúsculas correctamente en todo el texto. Usa solo los datos aportados. No inventes nombres, distancias ni riesgos. Si faltan datos, indícalo en limitations. Devuelve solo JSON válido ajustado al schema.",
           },
         ],
       },
@@ -631,16 +751,7 @@ async function generateReportWithLlm(context: ToolContext, limitations: string[]
           {
             type: "input_text",
             text: `Genera un informe estructurado para esta zona usando exclusivamente estos datos:\n${JSON.stringify(
-              {
-                tools: {
-                  buscarCoordenadas: context.coordinates,
-                  capasUrbanismo: context.urban,
-                  riesgoInundacion: context.floodRisk,
-                  observacionCopernicus: context.copernicus,
-                  consultaIgn: context.ign,
-                },
-                warnings: limitations,
-              },
+              compactContext,
               null,
               2,
             )}`,
@@ -658,6 +769,8 @@ async function generateReportWithLlm(context: ToolContext, limitations: string[]
     },
   });
 
+  console.log("[analyze-area] received response from OpenAI");
+
   const outputText = extractOutputText(response);
 
   if (!outputText) {
@@ -674,80 +787,95 @@ async function generateReportWithLlm(context: ToolContext, limitations: string[]
 }
 
 export async function POST(request: Request) {
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json(
-      { error: "Missing OPENAI_API_KEY environment variable." },
-      { status: 500 },
-    );
-  }
-
-  let body: AnalyzeAreaRequest;
-
   try {
-    body = (await request.json()) as AnalyzeAreaRequest;
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body." },
-      { status: 400 },
+    console.log("[analyze-area] entered endpoint");
+
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      console.error("[analyze-area] missing OPENAI_API_KEY");
+      return NextResponse.json(
+        { error: "Missing OPENAI_API_KEY environment variable." },
+        { status: 500 },
+      );
+    }
+
+    console.log(
+      `[analyze-area] OPENAI_API_KEY exists: ${maskApiKey(apiKey)}`,
     );
-  }
 
-  const lat = Number(body.lat);
-  const lon = Number(body.lon);
+    let body: AnalyzeAreaRequest;
 
-  if (!isValidLatitude(lat) || !isValidLongitude(lon)) {
-    return NextResponse.json(
-      { error: "Invalid or missing lat/lon." },
-      { status: 400 },
-    );
-  }
+    try {
+      body = (await request.json()) as AnalyzeAreaRequest;
+    } catch {
+      console.error("[analyze-area] invalid JSON body");
+      return NextResponse.json(
+        { error: "Invalid JSON body." },
+        { status: 500 },
+      );
+    }
 
-  let coordinates: CoordinatesToolResult;
-  let urban: UrbanToolResult;
-  let floodRisk: FloodRiskToolResult;
-  let copernicus: CopernicusToolResult;
-  let ign: IgnToolResult;
+    const lat = Number(body.lat);
+    const lon = Number(body.lon);
 
-  try {
-    coordinates = await buscarCoordenadas(lat, lon);
-    urban = await capasUrbanismo(lat, lon, request);
-    floodRisk = await riesgoInundacion(lat, lon, request);
-    copernicus = await observacionCopernicus(lat, lon);
-    ign = await consultaIgn(lat, lon);
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unexpected tool execution error.",
-      },
-      { status: 502 },
-    );
-  }
+    if (!isValidLatitude(lat) || !isValidLongitude(lon)) {
+      console.error("[analyze-area] invalid lat/lon", {
+        lat: body.lat,
+        lon: body.lon,
+      });
+      return NextResponse.json(
+        { error: "Invalid or missing lat/lon." },
+        { status: 500 },
+      );
+    }
 
-  const toolContext: ToolContext = {
-    coordinates,
-    urban,
-    floodRisk,
-    copernicus,
-    ign,
-  };
+    console.log("[analyze-area] starting tool execution", { lat, lon });
 
-  const limitations = buildLimitations(toolContext);
+    const [coordinates, urban, floodRisk, copernicus, ign] = await Promise.all([
+      buscarCoordenadas(lat, lon),
+      capasUrbanismo(lat, lon, request),
+      riesgoInundacion(lat, lon, request),
+      observacionCopernicus(lat, lon),
+      consultaIgn(lat, lon),
+    ]);
 
-  try {
+    console.log("[analyze-area] tools completed", {
+      coordinates: coordinates.warning ? "warning" : "ok",
+      urban: urban.warning ? "warning" : "ok",
+      floodRisk: floodRisk.warning ? "warning" : "ok",
+      copernicus: copernicus.warning ? "warning" : "ok",
+      ign: ign.warning ? "warning" : "ok",
+    });
+
+    const toolContext: ToolContext = {
+      coordinates,
+      urban,
+      floodRisk,
+      copernicus,
+      ign,
+    };
+
+    const limitations = buildLimitations(toolContext);
+
+    console.log("[analyze-area] before OpenAI request", {
+      limitationsCount: limitations.length,
+    });
+
     const report = await generateReportWithLlm(toolContext, limitations);
-    return NextResponse.json(report);
+
+    console.log("[analyze-area] report generated successfully");
+
+    return NextResponse.json(report, { status: 200 });
   } catch (error) {
+    console.error("[analyze-area] error", getErrorMessage(error));
+
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Unexpected analyze-area error.",
+          error instanceof Error ? error.message : "Unexpected server error.",
       },
-      { status: 502 },
+      { status: 500 },
     );
   }
 }
