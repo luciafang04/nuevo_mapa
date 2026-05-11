@@ -1,4 +1,5 @@
 import puppeteer from "puppeteer";
+import chromium from "@sparticuz/chromium";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -183,6 +184,42 @@ function buildReportHtml(report: GeospatialReport) {
 </html>`;
 }
 
+async function getBrowserLaunchOptions() {
+  if (process.env.CHROME_EXECUTABLE_PATH) {
+    return {
+      executablePath: process.env.CHROME_EXECUTABLE_PATH,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    } satisfies Parameters<typeof puppeteer.launch>[0];
+  }
+
+  if (process.platform === "linux") {
+    const headless = "shell" as const;
+
+    return {
+      executablePath: await chromium.executablePath(),
+      headless,
+      args: puppeteer.defaultArgs({
+        args: chromium.args,
+        headless,
+      }),
+      defaultViewport: {
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
+        isLandscape: true,
+      },
+    } satisfies Parameters<typeof puppeteer.launch>[0];
+  }
+
+  return {
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  } satisfies Parameters<typeof puppeteer.launch>[0];
+}
+
 export async function POST(request: Request) {
   let body: ExportPdfRequest;
 
@@ -205,10 +242,7 @@ export async function POST(request: Request) {
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    browser = await puppeteer.launch(await getBrowserLaunchOptions());
 
     const page = await browser.newPage();
 
